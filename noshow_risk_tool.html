@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Daily No-Show Risk Tool — JinCare</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f5; color: #1a1a1a; padding: 2rem 1rem; }
+  .container { max-width: 900px; margin: 0 auto; }
+  h1 { font-size: 22px; font-weight: 600; margin-bottom: 4px; }
+  .subtitle { font-size: 14px; color: #666; margin-bottom: 2rem; }
+  .card { background: white; border-radius: 12px; padding: 1.25rem 1.5rem; margin-bottom: 1rem; border: 1px solid #e5e5e5; }
+  .card-label { font-size: 11px; font-weight: 600; color: #888; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 10px; }
+  textarea { width: 100%; min-height: 200px; font-family: 'Courier New', monospace; font-size: 13px; padding: 12px; border-radius: 8px; border: 1px solid #ddd; background: #fafafa; color: #1a1a1a; resize: vertical; line-height: 1.6; outline: none; }
+  textarea:focus { border-color: #999; background: white; }
+  .tip { font-size: 13px; color: #888; margin-top: 8px; line-height: 1.5; }
+  .actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  button { padding: 10px 24px; border-radius: 8px; font-size: 14px; cursor: pointer; font-family: inherit; border: 1px solid #ddd; background: white; color: #1a1a1a; transition: background 0.15s; }
+  button:hover { background: #f0f0f0; }
+  button.primary { background: #1a1a1a; color: white; border-color: #1a1a1a; }
+  button.primary:hover { background: #333; }
+  .error { color: #c0392b; font-size: 13px; margin-top: 8px; }
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 1.25rem; }
+  .stat { background: #f9f9f9; border-radius: 8px; padding: 12px 16px; text-align: center; border: 1px solid #eee; }
+  .stat-num { font-size: 26px; font-weight: 600; }
+  .stat-label { font-size: 12px; color: #888; margin-top: 2px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; padding: 8px 12px; font-weight: 600; font-size: 12px; color: #888; border-bottom: 1px solid #eee; }
+  td { padding: 10px 12px; border-bottom: 1px solid #f0f0f0; vertical-align: middle; }
+  tr:last-child td { border-bottom: none; }
+  tr.high { background: #fff5f5; }
+  tr.medium { background: #fffbf0; }
+  tr.low { background: #f6fff6; }
+  .badge { display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: 12px; font-weight: 600; }
+  .badge-high { background: #fde8e8; color: #c0392b; }
+  .badge-medium { background: #fef3e2; color: #d68910; }
+  .badge-low { background: #e8f8e8; color: #27ae60; }
+  .elig-flag { display: inline-block; padding: 2px 7px; border-radius: 20px; font-size: 11px; font-weight: 500; background: #fef3e2; color: #d68910; margin-left: 5px; }
+  .hidden { display: none; }
+  .name-cell { font-weight: 600; }
+  @media (max-width: 600px) {
+    .stats { grid-template-columns: repeat(2, 1fr); }
+    td, th { padding: 8px 6px; font-size: 12px; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>Daily No-Show Risk Tool</h1>
+  <p class="subtitle">Paste tomorrow's schedule to get a ranked risk list in seconds.</p>
+
+  <div class="card">
+    <div class="card-label">Step 1 — Paste schedule</div>
+    <textarea id="scheduleInput" placeholder="Copy your full daily schedule from the EHR and paste it here.
+
+How to copy:
+1. Open tomorrow's schedule in athenaOne
+2. Select all text (Ctrl+A or Cmd+A)
+3. Copy (Ctrl+C or Cmd+C)
+4. Paste here (Ctrl+V or Cmd+V)
+5. Click Generate Risk List"></textarea>
+    <p class="tip">Provider names, OPEN slots, and Lunch breaks are automatically skipped.</p>
+  </div>
+
+  <div class="card">
+    <div class="card-label">Step 2 — Generate list</div>
+    <div class="actions">
+      <button class="primary" onclick="runAnalysis()">Generate Risk List</button>
+      <button onclick="clearAll()">Clear</button>
+    </div>
+    <p id="errorMsg" class="error hidden"></p>
+  </div>
+
+  <div id="resultsSection" class="hidden">
+    <div class="card">
+      <div class="card-label">Step 3 — Call high-risk patients first</div>
+      <div class="stats" id="statsRow"></div>
+      <table>
+        <thead>
+          <tr>
+            <th>Risk</th>
+            <th>Time</th>
+            <th>Name</th>
+            <th>Age</th>
+            <th>Appt Type</th>
+            <th>Insurance</th>
+          </tr>
+        </thead>
+        <tbody id="resultsBody"></tbody>
+      </table>
+    </div>
+    <p style="font-size:12px; color:#aaa; text-align:center; margin-top:0.5rem;">
+      Risk is based on insurance type and patient age from 3 years of clinic data. High risk = confirm by phone call.
+    </p>
+  </div>
+</div>
+
+<script>
+const INSURANCE_RISK = {
+  'cash': 0.77, 'medicaid': 0.10, 'other': 0.08,
+  'commercial': 0.07, 'hmo': 0.05, 'medicare': 0.04, 'supplemental': 0.01
+};
+
+function classifyInsurance(ins) {
+  if (!ins || ins.trim() === '') return { label: 'No insurance (cash)', key: 'cash', eligFlag: false };
+  let hasElig = /eligibility\s*issue/i.test(ins);
+  let s = ins.toLowerCase().replace(/eligibility\s*issue/gi, '').trim();
+  if (/self-?pay|cash/.test(s)) return { label: 'No insurance (cash)', key: 'cash', eligFlag: false };
+  if (s.includes('medicare')) return { label: 'Medicare', key: 'medicare', eligFlag: hasElig };
+  if (s.includes('medicaid')) return { label: 'Medicaid', key: 'medicaid', eligFlag: hasElig };
+  if (s.includes('hmo')) return { label: 'HMO', key: 'hmo', eligFlag: hasElig };
+  if (/bcbs|blue\s*cross|anthem|united|aetna|cigna|humana|premera/.test(s))
+    return { label: ins.replace(/eligibility\s*issue/gi,'').trim(), key: 'commercial', eligFlag: hasElig };
+  return { label: ins.replace(/eligibility\s*issue/gi,'').trim() || 'Other', key: 'other', eligFlag: hasElig };
+}
+
+function classifyAppt(appt) {
+  if (!appt) return 'Other';
+  let s = appt.toLowerCase();
+  if (/follow.?up|f\/u|\blab\b/.test(s)) return 'Follow Up';
+  if (/ultrasound|\bus\b|doppler|fibroscan/.test(s)) return 'Ultrasound';
+  if (/wellness|annual/.test(s)) return 'Wellness Visit';
+  if (/new\s*(patient|visit)|immigration/.test(s)) return 'New Patient';
+  if (/weight/.test(s)) return 'Weight Management';
+  if (/virtual|telehealth|privia/.test(s)) return 'Virtual Visit';
+  if (/established/.test(s)) return 'Established Patient';
+  return appt.length > 28 ? appt.substring(0,28)+'...' : appt;
+}
+
+function calcAge(dob) {
+  try {
+    let p = dob.split('-');
+    let d = new Date(parseInt(p[2]), parseInt(p[0])-1, parseInt(p[1]));
+    let today = new Date();
+    let age = today.getFullYear() - d.getFullYear();
+    if (today < new Date(today.getFullYear(), d.getMonth(), d.getDate())) age--;
+    return (age > 0 && age < 120) ? age : null;
+  } catch(e) { return null; }
+}
+
+function ageRisk(age) {
+  if (age == null) return 0.20;
+  if (age < 30) return 0.28;
+  if (age < 40) return 0.22;
+  if (age < 50) return 0.18;
+  if (age < 60) return 0.14;
+  return 0.08;
+}
+
+function parseSchedule(text) {
+  let raw = text.split('\n').map(l => l.replace(/[\u200B\u200C\u200D\uFEFF\u00A0\r]/g,'').trim()).filter(l => l);
+
+  let joined = [];
+  let cur = '';
+  for (let line of raw) {
+    let isFrag = /^\d{2}min$/.test(line) || /^\(\d{3}\)/.test(line);
+    if (isFrag && cur) { cur += line; }
+    else { if (cur) joined.push(cur); cur = line; }
+  }
+  if (cur) joined.push(cur);
+
+  let patients = [];
+  let timeRe = /(\d{1,2}:\d{2}\s*[AP]M)/i;
+  let dobRe  = /^(\d{2}-\d{2}-\d{4})/;
+
+  function isSkip(line) {
+    if (/^(open|lunch)$/i.test(line)) return true;
+    if (/pmg_|office\*/i.test(line)) return true;
+    if (/^[A-Za-z\s,\.']+,?\s*(MD|DO|NP|PA|RN|DPM|PhD|CRNP|FNP|LAc)\.?\s*$/i.test(line)) return true;
+    if (/^(jcm\s|jcm$)/i.test(line)) return true;
+    if (/^eligibility\s*issue$/i.test(line)) return true;
+    return false;
+  }
+
+  let i = 0;
+  while (i < joined.length) {
+    let line = joined[i];
+    if (isSkip(line)) { i++; continue; }
+
+    let tm = timeRe.exec(line);
+    if (tm) {
+      let time = tm[1].replace(/\s+/,'');
+      i++;
+      if (i < joined.length && /^(open|lunch)$/i.test(joined[i])) { i++; continue; }
+      if (i >= joined.length) continue;
+      if (/^\*/.test(joined[i]) && !timeRe.test(joined[i])) continue;
+
+      let name = joined[i];
+      if (!name || name.length < 2 || /^\d/.test(name)) continue;
+      i++;
+
+      let dob = null, appt = null, ins = null;
+      if (i < joined.length && dobRe.test(joined[i])) { dob = dobRe.exec(joined[i])[1]; i++; }
+      if (i < joined.length && !/^\*/.test(joined[i]) && !dobRe.test(joined[i]) && !/^(open|lunch)$/i.test(joined[i])) { appt = joined[i]; i++; }
+      if (i < joined.length && !/^\*/.test(joined[i]) && !dobRe.test(joined[i]) && !/^(open|lunch)$/i.test(joined[i])) { ins = joined[i]; i++; }
+
+      patients.push({ time, name: name.trim(), dob, appt, ins });
+      continue;
+    }
+    i++;
+  }
+  return patients;
+}
+
+function runAnalysis() {
+  let text = document.getElementById('scheduleInput').value;
+  let errEl = document.getElementById('errorMsg');
+  errEl.classList.add('hidden');
+  document.getElementById('resultsSection').classList.add('hidden');
+
+  if (!text.trim()) {
+    errEl.textContent = 'Please paste your schedule first.';
+    errEl.classList.remove('hidden');
+    return;
+  }
+
+  let patients = parseSchedule(text);
+  if (patients.length === 0) {
+    errEl.textContent = 'No appointments found. Make sure you copied the full schedule text from athenaOne.';
+    errEl.classList.remove('hidden');
+    return;
+  }
+
+  let results = patients.map(p => {
+    let age = p.dob ? calcAge(p.dob) : null;
+    let insInfo = classifyInsurance(p.ins);
+    let insScore = INSURANCE_RISK[insInfo.key] || 0.07;
+    let score = (insScore * 0.55) + (ageRisk(age) * 0.45);
+    let risk = score >= 0.45 ? 'high' : score >= 0.20 ? 'medium' : 'low';
+    return { time: p.time, name: p.name, age, appt: classifyAppt(p.appt), insurance: insInfo.label, eligFlag: insInfo.eligFlag, score, risk };
+  }).sort((a, b) => b.score - a.score);
+
+  let high = results.filter(r => r.risk === 'high').length;
+  let med  = results.filter(r => r.risk === 'medium').length;
+  let low  = results.filter(r => r.risk === 'low').length;
+
+  document.getElementById('statsRow').innerHTML = `
+    <div class="stat"><div class="stat-num">${results.length}</div><div class="stat-label">Total</div></div>
+    <div class="stat"><div class="stat-num" style="color:#c0392b">${high}</div><div class="stat-label">High risk</div></div>
+    <div class="stat"><div class="stat-num" style="color:#d68910">${med}</div><div class="stat-label">Medium</div></div>
+    <div class="stat"><div class="stat-num" style="color:#27ae60">${low}</div><div class="stat-label">Low risk</div></div>
+  `;
+
+  document.getElementById('resultsBody').innerHTML = results.map(r => `
+    <tr class="${r.risk}">
+      <td><span class="badge badge-${r.risk}">${r.risk === 'high' ? 'High risk' : r.risk === 'medium' ? 'Medium' : 'Low'}</span></td>
+      <td>${r.time}</td>
+      <td class="name-cell">${r.name}</td>
+      <td>${r.age != null ? r.age : 'N/A'}</td>
+      <td>${r.appt}</td>
+      <td>${r.insurance}${r.eligFlag ? '<span class="elig-flag">elig. issue</span>' : ''}</td>
+    </tr>
+  `).join('');
+
+  document.getElementById('resultsSection').classList.remove('hidden');
+  document.getElementById('resultsSection').scrollIntoView({ behavior: 'smooth' });
+}
+
+function clearAll() {
+  document.getElementById('scheduleInput').value = '';
+  document.getElementById('resultsSection').classList.add('hidden');
+  document.getElementById('errorMsg').classList.add('hidden');
+}
+</script>
+</body>
+</html>
