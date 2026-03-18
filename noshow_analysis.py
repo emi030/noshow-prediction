@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
+import joblib
 from scipy import stats
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LogisticRegression
@@ -205,3 +206,7 @@ plt.xticks(rotation=45, ha='right')
 plt.tight_layout()
 plt.savefig('noshow_feature_importance.png')
 print("Feature importance plot saved!")
+
+# ── Save Model ──
+joblib.dump(rf, 'noshow_model.pkl')
+print("Model saved!")
