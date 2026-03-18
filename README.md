@@ -56,7 +56,7 @@ SMOTE was used to address class imbalance. GridSearch optimized hyperparameters 
 1. Open `noshow_risk_tool.html` in any browser (double-click the file)
 2. Copy your daily schedule from athenaOne
 3. Paste into the tool and click Generate
-4. High-risk patients are flagged in red — call those first
+4. High-risk patients are flagged in red
 
 ## Tools
 - Python, pandas, numpy, matplotlib, seaborn, scikit-learn, scipy, xgboost, imbalanced-learn
