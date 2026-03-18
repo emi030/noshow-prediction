@@ -1,0 +1,16 @@
+# Data files
+*.csv
+*.xlsx
+*.xls
+
+# Model files
+*.pkl
+*.joblib
+
+# Mac files
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
